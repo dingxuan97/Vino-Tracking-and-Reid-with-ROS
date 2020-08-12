@@ -208,7 +208,7 @@ def main():
                                                   tracking live demo script')
     parser.add_argument('-i', type=str, nargs='+', help='Input sources (indexes \
                         of cameras or paths to video files)', required=True)
-    parser.add_argument('--config', type=str, default="/home/dingxuan/catkin_ws/src/my_package/scripts/multi_camera_multi_person_tracking/config.py", required=False,
+    parser.add_argument('--config', type=str, default="/home/dingxuan/catkin_ws/src/vino_reid/scripts/multi_camera_multi_person_tracking/config.py", required=False,
                         help='Configuration file')
 
     parser.add_argument('--detections', type=str, help='JSON file with bounding boxes')

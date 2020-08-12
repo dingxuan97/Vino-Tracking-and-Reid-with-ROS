@@ -42,6 +42,7 @@ def listener():
     bridge = CvBridge()
     rospy.loginfo("Loading subscribed images")    
     rospy.Subscriber('/image_pub', Image, showimage)
+    rospy.Subscriber('/face_pub', Image, showimage)
     rospy.spin()
 #    rate = rospy.Rate(5)
 #    rate.sleep()

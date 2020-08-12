@@ -32,6 +32,11 @@ from face_detector import FaceDetector
 from faces_database import FacesDatabase
 from face_identifier import FaceIdentifier
 
+# import ros packages
+import rospy
+from sensor_msgs.msg import Image
+from cv_bridge import CvBridge, CvBridgeError
+
 DEVICE_KINDS = ['CPU', 'GPU', 'FPGA', 'MYRIAD', 'HETERO', 'HDDL']
 MATCH_ALGO = ['HUNGARIAN', 'MIN_DIST']
 
@@ -281,6 +286,17 @@ class Visualizer:
         return text_size, baseline
 
     def draw_detection_roi(self, frame, roi, identity):
+        rospy.init_node('face_publisher', anonymous = True)
+        face_pub = rospy.Publisher('/face_pub', Image, queue_size=1)
+        rate = rospy.Rate(30)
+        img = Image()
+        x,y = int(roi.position[0]), int(roi.position[1])
+        w,h = int(roi.size[0]), int(roi.size[1])
+        img = CvBridge().cv2_to_imgmsg(frame[y:y+h, x:x+w], 'bgr8')
+        rospy.loginfo("Publishing image")
+        face_pub.publish(img)
+        rate.sleep()
+        
         label = self.frame_processor \
             .face_identifier.get_identity_label(identity.id)
 
