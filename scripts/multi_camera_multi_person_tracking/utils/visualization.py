@@ -23,18 +23,17 @@ import rospy
 import sys
 import numpy as np
 
-from std_msgs.msg import String,UInt16MultiArray,MultiArrayLayout,MultiArrayDimension,Int16,UInt8MultiArray
+from std_msgs.msg import String,Int32MultiArray,MultiArrayLayout,MultiArrayDimension,Int8,UInt8MultiArray
 from sensor_msgs.msg import Image
 from cv_bridge import CvBridge, CvBridgeError
 
 
 def draw_detections(target_idx, frame, detections, show_all_detections=True):
-
+    array = []
 #    # ROS publisher 
     bridge = CvBridge()
     rospy.init_node('publisher', anonymous = True)
-    index_pub = rospy.Publisher('/label_idx', Int16, queue_size=10)
-    image_pub = rospy.Publisher('/image_pub', Image, queue_size=1)
+    index_roi = rospy.Publisher('/index_roi', Int32MultiArray, queue_size=10)
     rate = rospy.Rate(30)
     img = Image()
 
@@ -47,6 +46,12 @@ def draw_detections(target_idx, frame, detections, show_all_detections=True):
 
         if show_all_detections or id >= 0:
             cv.rectangle(frame, (left, top), (right, bottom), box_color, thickness=3)
+            array.append(id)
+            array.append(left)
+            array.append(top)
+            array.append(right)
+            array.append(bottom)
+            rate.sleep()
 
         if id >= 0:
             label = 'ID {}'.format(label) if not isinstance(label, str) else label
@@ -55,23 +60,12 @@ def draw_detections(target_idx, frame, detections, show_all_detections=True):
             cv.rectangle(frame, (left, top - label_size[1]), (left + label_size[0], top + base_line),
                          (255, 255, 255), cv.FILLED)
             for idx in target_idx:
-            	
             	if idx == label[3:]:
             		cv.putText(frame, label, (left, top), cv.FONT_HERSHEY_SIMPLEX, 3, (0, 0, 255), 5)
-            		print(type(frame))
-            		frame = frame.astype('uint8')
-            		img = bridge.cv2_to_imgmsg(frame[top:bottom, left:right], 'bgr8')
-#            		index_pub.publish(int(idx))
-            		rospy.loginfo("Publishing image")
-            		rospy.loginfo(type(frame[top:bottom, left:right]))
-#            		except (rospy.ServiceException, rospy.ROSException) as e:
-#            		    print(e)
-            		image_pub.publish(img)
-            		rate.sleep()
-            	    
-            	if idx != label[3:]:
-           			cv.putText(frame, label, (left, top), cv.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 2)
-
+            	elif idx != label[3:]:
+                    cv.putText(frame, label, (left, top), cv.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 2)
+    index_roi.publish(data=array)
+    array = []
 
 def get_target_size(frame_sizes, vis=None, max_window_size=(1920, 1080), stack_frames='vertical', **kwargs):
     if vis is None:

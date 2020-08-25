@@ -28,8 +28,8 @@ def showimage(data):
     rospy.loginfo("received an image!")
     try:
         image = bridge.imgmsg_to_cv2(data, desired_encoding="passthrough")
-        cv.imwrite("/home/dingxuan/Desktop/test.jpg", image)
-        cv.imshow("subscribed", image)
+#        cv.imwrite("/home/dingxuan/Desktop/test.jpg", image)
+#        cv.imshow("subscribed", image)
     except CvBridgeError as e:
         print(e)
     

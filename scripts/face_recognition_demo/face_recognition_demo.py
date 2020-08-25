@@ -31,14 +31,44 @@ from landmarks_detector import LandmarksDetector
 from face_detector import FaceDetector
 from faces_database import FacesDatabase
 from face_identifier import FaceIdentifier
+from util.misc import COLOR_PALETTE
+
+# My Class
+# from identity import Person
+# from identity import Identity
 
 # import ros packages
+from vino_reid.msg import face_roi
 import rospy
+from std_msgs.msg import String,Int8,Int32MultiArray
 from sensor_msgs.msg import Image
 from cv_bridge import CvBridge, CvBridgeError
 
 DEVICE_KINDS = ['CPU', 'GPU', 'FPGA', 'MYRIAD', 'HETERO', 'HDDL']
 MATCH_ALGO = ['HUNGARIAN', 'MIN_DIST']
+
+
+# Global Variables
+FRAME = np.zeros(128)
+face_label = "Unknown"
+roi2 = [0,0,0,0]
+vis = np.zeros(128)
+index_roi = [0,0,0,0,0]
+linked_identities = ""
+
+
+class Identity:
+    def __init__(self, reid_index):
+        self.index = reid_index
+        self.roi = [0,0,0,0]
+        self.links = {}
+        self.misses = 0
+
+class Person:
+    def __init__(self):
+        self.reid = []
+        self.faces = []
+        self.index = []
 
 
 def build_argparser():
@@ -111,6 +141,8 @@ def build_argparser():
     infer.add_argument('-t_fd', metavar='[0..1]', type=float, default=0.6,
                        help="(optional) Probability threshold for face detections" \
                        "(default: %(default)s)")
+
+    # Will only display names of faces with similarity greater than 70%
     infer.add_argument('-t_id', metavar='[0..1]', type=float, default=0.3,
                        help="(optional) Cosine distance threshold between two vectors " \
                        "for face identification (default: %(default)s)")
@@ -192,6 +224,7 @@ class FrameProcessor:
         return model
 
     def process(self, frame):
+        #print(frame.shape)
         assert len(frame.shape) == 3, \
             "Expected input frame in (H, W, C) format"
         assert frame.shape[2] in [3, 4], \
@@ -247,12 +280,25 @@ class FrameProcessor:
 class Visualizer:
     BREAK_KEY_LABELS = "q(Q) or Escape"
     BREAK_KEYS = {ord('q'), ord('Q'), 27}
+    IMAGE = None
+    def callback(data):
+        global IMAGE
+        IMAGE = CvBridge().imgmsg_to_cv2(data, desired_encoding="passthrough")
 
 
     def __init__(self, args):
         self.frame_processor = FrameProcessor(args)
         self.display = not args.no_show
         self.print_perf_stats = args.perf_stats
+
+        '''
+        #Added features
+        '''
+        self.frames_snapped = 10
+        self.name = None
+        '''
+        frames_snapped: Counts the number of frames to automatically save the image into database
+        '''
 
         self.frame_time = 0
         self.frame_start_time = 0
@@ -285,18 +331,76 @@ class Visualizer:
                     font, scale, color, thickness)
         return text_size, baseline
 
-    def draw_detection_roi(self, frame, roi, identity):
-        rospy.init_node('face_publisher', anonymous = True)
-        face_pub = rospy.Publisher('/face_pub', Image, queue_size=1)
-        rate = rospy.Rate(30)
-        img = Image()
-        x,y = int(roi.position[0]), int(roi.position[1])
-        w,h = int(roi.size[0]), int(roi.size[1])
-        img = CvBridge().cv2_to_imgmsg(frame[y:y+h, x:x+w], 'bgr8')
-        rospy.loginfo("Publishing image")
-        face_pub.publish(img)
-        rate.sleep()
-        
+    def draw_detection_roi(self, frame, roi, identity, person=None):
+        '''
+        Listens for the id and bbox from visualizer in [id,x1,y1,x2,y2,....] order
+        Compares roi with the obtained faces and respective ROIs
+        '''
+        global face_label, roi2
+        def listener():
+            global index_roi, face_label, roi2, linked_identities
+            def callback4(data):
+                global vis
+                vis = CvBridge().imgmsg_to_cv2(data, desired_encoding="passthrough")
+                
+            def callback1(data):
+                global index_roi
+                index_roi = data.data
+                
+            def check_overlap(R1, R2):
+                # check if one rectangle is left of or above the other
+                if (R1[0]>=R2[2]) or (R1[2]<=R2[0]) or (R1[3]<=R2[1]) or (R1[1]>=R2[3]):
+                    return False
+                
+                return True
+
+            
+            final_vis = rospy.Publisher("/final_vis", Image, queue_size=1)
+            img = Image()
+            linked_identities = ""
+            
+            rospy.Subscriber("/index_roi", Int32MultiArray, callback1)
+            # rospy.Subscriber("/vis_pub", Image, callback4)
+
+            for idx in range(len(index_roi)//4):
+                copy_index = index_roi[idx*5]
+                if copy_index >= 0:
+                    if len(person.reid) > 0:
+                        for ids in person.reid:
+                            if ids.index == copy_index:
+                                ids.roi = index_roi[idx*5 +1: idx*5 +5]
+                                if check_overlap(ids.roi, roi2):
+                                    if face_label in ids.links:
+                                        ids.links[face_label] += 1
+                                        ids.misses = 0	
+                                    elif face_label != 'Unknown':
+                                        ids.links[face_label] = 1
+                                    break
+                                else:
+                                    continue
+                                break
+                            else:
+                                ids.misses += 1
+                                if ids.misses >= 10000:
+                                    person.reid.remove(ids)
+                                    print("[INFO] {} removed!".format(max(ids.links, key=ids.links.get)))
+                        else:
+                            if (person.index.count(copy_index) == 0):
+                                print("[INFO] Added Index {}".format(copy_index))
+                                person.reid.append(Identity(copy_index))
+                                person.index.append(copy_index)
+                    else:
+                        person.reid.append(Identity(copy_index))
+                        person.index.append(copy_index)
+            for ids in person.reid:
+                if len(ids.links) != 0:
+                    maxKey = max(ids.links, key=ids.links.get)
+                    text = "ID {} is {}.".format(ids.index, maxKey)
+                    text += '\n'
+                    linked_identities += text
+            print(linked_identities)
+            #### END OF LISTENER SUBSCRIBER
+
         label = self.frame_processor \
             .face_identifier.get_identity_label(identity.id)
 
@@ -310,12 +414,30 @@ class Visualizer:
         font = cv2.FONT_HERSHEY_SIMPLEX
         text_size = cv2.getTextSize("H1", font, text_scale, 1)
         line_height = np.array([0, text_size[0][1]])
-        text = label
+        text = label.split('.')[0]
         if identity.id != FaceIdentifier.UNKNOWN_ID:
             text += ' %.2f%%' % (100.0 * (1 - identity.distance))
         self.draw_text_with_background(frame, text,
                                        roi.position - line_height * 0.5,
                                        font, scale=text_scale)
+        '''
+        face_roi msg
+        name: face_label
+        roi: Array of the roi of the face
+        '''
+        x,y,w,h = int(roi.position[0]), int(roi.position[1]), int(roi.size[0]), int(roi.size[1])
+        roi2 = [x,y,x+w,y+h]
+        face_label = label.split('.')[0]
+        listener()
+        # label_roi = face_roi()
+        # face_pub = rospy.Publisher('/face_roi', face_roi, queue_size=10)
+        # rate = rospy.Rate(30)
+        # label_roi.name = label.split('.')[0]
+        # label_roi.roi = [x,y,x+w,y+h]
+        # face_pub.publish(label_roi)
+        # rate.sleep()
+
+                
 
     def draw_detection_keypoints(self, frame, roi, landmarks):
         keypoints = [landmarks.left_eye,
@@ -328,9 +450,9 @@ class Visualizer:
             center = roi.position + roi.size * point
             cv2.circle(frame, tuple(center.astype(int)), 2, (0, 255, 255), 2)
 
-    def draw_detections(self, frame, detections):
+    def draw_detections(self, frame, detections, person=None):
         for roi, landmarks, identity in zip(*detections):
-            self.draw_detection_roi(frame, roi, identity)
+            self.draw_detection_roi(frame, roi, identity, person)
             self.draw_detection_keypoints(frame, roi, landmarks)
 
     def draw_status(self, frame, detections):
@@ -353,7 +475,8 @@ class Visualizer:
             log.info('Performance stats:')
             log.info(self.frame_processor.get_performance_stats())
 
-    def display_interactive_window(self, frame):
+    def display_interactive_window(self, frame, person):
+        global linked_identities
         color = (255, 255, 255)
         font = cv2.FONT_HERSHEY_SIMPLEX
         text_scale = 0.5
@@ -364,8 +487,17 @@ class Visualizer:
         line_height = np.array([0, text_size[0][1]]) * 1.5
         cv2.putText(frame, text,
                     tuple(origin.astype(int)), font, text_scale, color, thickness)
-
+        
+        # Draw the detections
+                # Draw ROI
+        cv2.putText(frame, linked_identities, (50,200), font, 2, (0,0,200), 3)
+        for ids in person.reid: 
+            if ids.roi != [0, 0, 0, 0]:
+                box_color = COLOR_PALETTE[ids.index % len(COLOR_PALETTE)] if ids.index >= 0 else (0, 0, 0)
+                cv2.rectangle(frame, (ids.roi[0], ids.roi[1]), (ids.roi[2], ids.roi[3]), box_color, thickness=3)
+                cv2.putText(frame, str(ids.index), (ids.roi[0], ids.roi[1]), cv2.FONT_HERSHEY_SIMPLEX, 1, box_color, 2)
         cv2.imshow('Face recognition demo', frame)
+
 
     def should_stop_display(self):
         key = cv2.waitKey(self.frame_timeout) & 0xFF
@@ -374,43 +506,88 @@ class Visualizer:
     def process(self, input_stream, output_stream, args):
         self.input_stream = input_stream
         self.output_stream = output_stream
+        
+        def callback3(data):
+            global FRAME
+            FRAME = bridge.imgmsg_to_cv2(data, desired_encoding="passthrough")
 
-        while input_stream.isOpened():
-            has_frame, frame = input_stream.read()
-            if not has_frame:
-                break
+        # Init ROS
+        bridge = CvBridge()
+        rospy.init_node('face_publisher', anonymous = True)
+        def listener():
+            # From Multi-Cam Visualizer
+            rospy.Subscriber('/frames_pub', Image, callback3)
+        rate = rospy.Rate(30)
 
-            if self.input_crop is not None:
-                frame = Visualizer.center_crop(frame, self.input_crop)
-            detections = self.frame_processor.process(frame)
-            if cv2.waitKey(1) & 0xFF == ord("s"):
-            	name = input("Please input name")
-            	roi = cv2.selectROI(frame)
-            	x,y,w,h = int(roi[0]), int(roi[1]), int(roi[2]), int(roi[3])
-            	current_db = os.listdir(args.fg)
-            	count = 0
-            	for file_name in current_db:
-            	    if file_name.count(str(name)):
-            	        count+= 1
-            	cv2.imwrite("{}{}.png".format(args.fg,name+str(count)), frame[y:y+h, x:x+w])
-#            	x,y = int(detections[0][0].position[0]), int(detections[0][0].position[1])
-#            	w,h = int(detections[0][0].size[0]), int(detections[0][0].size[1])
-            	self.frame_processor.refresh_database(args)
-            	
-            	
-            
-            self.draw_detections(frame, detections)
-            self.draw_status(frame, detections)
+        # Init tracker 
+        person = Person() 
 
-            if output_stream:
-                output_stream.write(frame)
-            if self.display:
-                self.display_interactive_window(frame)
-                if self.should_stop_display():
-                    break
+        while not rospy.is_shutdown():
+        #while input_stream.isOpened():
+            listener()
+            try:
+                if FRAME.any() != 0:
+                    frame = FRAME
+                    '''
+                    @Original function to register input data
+                    '''
+#                    has_frame, frame = input_stream.read()
+#                    frame = cv2.resize(frame,(1280,720),fx=0,fy=0, interpolation = cv2.INTER_CUBIC)
+#                    
+#                    if not has_frame:
+#                        break
+                    
+                    if self.input_crop is not None:
+                        frame = Visualizer.center_crop(frame, self.input_crop)
+                    detections = self.frame_processor.process(frame)
 
-            self.update_fps()
-            self.frame_num += 1
+                    '''
+                    @Manual cropping of faces
+                    '''
+                    if cv2.waitKey(1) & 0xFF == ord("a"):
+                        name = input("Please input name")
+                        cropped = cv2.selectROI(frame)
+                        current_db = os.listdir(args.fg)
+                        name_list = [f.split('.')[0] for f in current_db]
+                        counter = name_list.count(self.name)
+                        x,y,w,h = cropped[0], cropped[1], cropped[2], cropped[3]
+                        cv2.imwrite("{}{}.{}.png".format(args.fg,name,str(counter)), frame[y:y+h, x:x+w])
+                        self.frame_processor.refresh_database(args)
+                    '''
+                    @Added feature: Automated recording of faces
+                    '''
+                    if cv2.waitKey(1) & 0xFF == ord("s"):
+                        self.name = input("Please input name and we will save 10 best images")
+                    for roi, landmarks, identity in zip(*detections):
+                        label = self.frame_processor.face_identifier.get_identity_label(identity.id)
+
+                        # Saves if the reidentified face is same as name you typed and higher than 60% similarity
+                        if self.name == label.split('.')[0] and (1-identity.distance) > 0.6:
+                            x,y,w,h = int(roi.position[0]), int(roi.position[1]), int(roi.size[0]), int(roi.size[1])
+                            current_db = os.listdir(args.fg)
+                            counter = 0
+                            name_list = [f.split('.')[0] for f in current_db]
+                            counter = name_list.count(self.name)
+                            cv2.imwrite("{}{}.{}.png".format(args.fg,self.name,str(counter)), frame[y:y+h, x:x+w])
+                            self.frames_snapped -= 1
+                            self.frame_processor.refresh_database(args)
+                    if self.frames_snapped == 0:
+                        self.frames_snapped = 10
+                        self.name = None
+                    self.draw_detections(frame, detections, person)
+                    self.draw_status(frame, detections)
+                    
+                    if output_stream:
+                        output_stream.write(frame)
+                    if self.display:
+                        self.display_interactive_window(frame, person)
+                        if self.should_stop_display():
+                            break
+                    
+                    self.update_fps()
+                    self.frame_num += 1
+            except CvBridgeError as e:
+                rospy.loginfo(e)
 
     @staticmethod
     def center_crop(frame, crop_size):

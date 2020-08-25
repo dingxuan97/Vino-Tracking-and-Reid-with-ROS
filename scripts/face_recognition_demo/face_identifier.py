@@ -39,7 +39,7 @@ class FaceIdentifier(Module):
             self.distance = distance
             self.descriptor = desc
 
-    def __init__(self, model, match_threshold=0.5, match_algo='HUNGARIAN'):
+    def __init__(self, model, match_threshold=0.3, match_algo='HUNGARIAN'):
         super(FaceIdentifier, self).__init__(model)
 
         assert len(model.inputs) == 1, "Expected 1 input blob"
@@ -97,11 +97,17 @@ class FaceIdentifier(Module):
         for num, match in enumerate(matches):
             id = match[0]
             distance = match[1]
+            
+            '''
+            Key Functions
+            '''
+            # Only show names of faces with similarity greater than threshold (70%) else displayed as Unknown
             if self.match_threshold < distance:
                 id = self.UNKNOWN_ID
                 unknowns_list.append(num)
 
             results.append(self.Result(id, distance, descriptors[num]))
+
         return results, unknowns_list
 
     def get_descriptors(self):
