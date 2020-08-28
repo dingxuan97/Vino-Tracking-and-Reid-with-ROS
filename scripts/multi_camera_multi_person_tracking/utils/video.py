@@ -13,6 +13,14 @@
 
 import logging as log
 import cv2 as cv
+import rospy
+import sys
+import numpy as np
+from vino_reid.msg import transfer_frames
+
+from std_msgs.msg import String,UInt16MultiArray,MultiArrayLayout,MultiArrayDimension,Int16,Int32MultiArray
+from sensor_msgs.msg import Image
+from cv_bridge import CvBridge, CvBridgeError
 
 
 class MulticamCapture:
@@ -22,6 +30,7 @@ class MulticamCapture:
         self.transforms = []
 
         try:
+            # If src is videopath, int(src) returns error hence mode = 'video'
             sources = [int(src) for src in sources]
             mode = 'cam'
         except ValueError:
@@ -55,7 +64,6 @@ class MulticamCapture:
                 for t in self.transforms:
                     frame = t(frame)
                 frames.append(frame)
-
         return len(frames) == len(self.captures), frames
 
     def get_num_sources(self):

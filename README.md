@@ -11,7 +11,7 @@ These instructions will get you a copy of the project up and running on your loc
 Intel CPU/GPU/Morvidius VPU/Neural Compute Stick 2 (OpenVINO is optimised to run on Intel processors)
 OpenVINO v2020.2
 ROS Melodic with cv_bridge set up
-OpenCV 3
+OpenCV 3 or above
 Run pip install -r requirements.txt to install pre-requisites. 
 Git clone into your catkin workspace source folder eg.<catkin_ws/src/>
 ```
@@ -27,10 +27,6 @@ Choose Linux and openvino version 2020.2
 Follow instructions on this website after installation
 https://docs.openvinotoolkit.org/2020.2/_docs_install_guides_installing_openvino_linux.html
 
-
-Ensure you can run the demo_security_barrier_camera.sh and view the output as shown below.
-
-![Image of test](./images/IEpipeline.png "Demo test pic")
 
 ### OpenVINO Demos
 
@@ -67,7 +63,7 @@ python multi_camera_multi_person_tracking.py
 --m_detector path/to/person-detection-retail-0013.xml \ 
 --m_reid path/to/person-reidentification-retail-0031.xml \ 
 --config config.py \ 
--i path/to/video1.avi path/to/video2.avi 
+-i path/to/video1.avi path/to/video2.avi [Input Single or Multiple videos]
 ```
 
 face_recognition
@@ -129,7 +125,7 @@ Note: Try running souce install/setup.bash after the --extend command if it does
 
 # Running the tests
 
-Run the following commands to start the test for the demonstration
+Run the following commands to start the test for the demonstration. You can find some sample dataset videos in the videos folder. References below.
 
 ## Multi-cam-multi-person-tracking
 
@@ -150,12 +146,12 @@ Frame rate is slightly slower due to the recording, it should run at least ~15fp
 
 ## Face-recognition and reidentification
 
-### This programe compares the ROI from multi-cam-multi-person-tracking to link face with the ID
+***This programe compares the ROI from multi-cam-multi-person-tracking to link face with the ID***
 ```
 rosrun vino_reid face_recognition.py -i <path to single video or webcam>
 ```
 
-### Press 'a' and enter name of the person followed by selecting the ROI. After saving the initial ROI, press 's' and enter the same name to automatically save more images of the face into your database for more accurate reidentification.
+Press 'a' and enter name of the person followed by selecting the ROI. After saving the initial ROI, press 's' and enter the same name to automatically save more images of the face into your database for more accurate reidentification.
 
 You may want to save image of the person face from different angles to provide a more accurate reidentification.
 
@@ -176,7 +172,7 @@ I added a new target_idx parameter (default = [-1]) here to input which ever ID 
 
 ### visualization.py
 
-### New Publisher
+New Publisher
 ```
 In draw_detections(), added rospy publisher to publish the roi of detected ID in order of [id, x1, y1, x2, y2, ...] to the face_recognition_demo
 ```
@@ -185,13 +181,14 @@ In draw_detections(), added rospy publisher to publish the roi of detected ID in
 
 ### face_recognition_demo.py
 
-### New Subcriber and Classes
+New Subcriber
 
 In draw_detection_roi()
 ```
 listener() computes roi received from multi-cam-multi-person-tracking
 ```
-Classes
+
+New Classes
 ```
 2 new classes: Identity (line 60) and Person (line 67)
 A single Person object exists once the programe starts while each ID has an Identity object attached to it.
@@ -199,20 +196,20 @@ Each Identity records frames of the names whose roi it has intersected and displ
 Each Identity is appended into the Person object.
 ```
 
-### Important args: 
+Important args: 
 ```
 -fg (Main Database where you input images prior or save images into)
 -t_id  Displays names of faces only if the similarity is above the percentage in args.fg
 ```
 
-### Storing new faces into database:
+Storing new faces into database:
 ```
 New waitKeys
 ord('a') is used to crop out first image of the user face
 ord('s') will allow program to auto detect faces which have similarity above 60% and save them into database
 ```
 
-### New functions:
+New functions:
 ```
 New Function
 *Added new function to FrameProcessor class to refresh database everytime a new image is saved.(line 206)
@@ -226,11 +223,16 @@ New Function
 ## Authors
 
 * **Ding Xuan Er** - *Initial work* - [dingxuan97](https://github.com/dingxuan97)
-* **Billie Thompson** - *Initial work* - [PurpleBooth](https://github.com/PurpleBooth)
 
-See also the list of [contributors](https://github.com/your/project/contributors) who participated in this project.
+
+See also the list of [contributors](https://github.com/your/project/contributors) that I have looked up for this project.
 
 ## Acknowledgments
 
 * [Cyan Infinite](https://www.youtube.com/watch?v=h-odZn-yGPY&list=PLWw98q-Xe7iH06qxEW5a22SBsSNsGnYjZ) for cv_bridge compilation guide
 * [Rocket Systems](https://www.youtube.com/watch?v=h-odZn-yGPY&list=PLWw98q-Xe7iH06qxEW5a22SBsSNsGnYjZ) on Youtube for guidance on creating your own vino projects
+
+### Dataset Videos
+* [CAVIAR Dataset](http://groups.inf.ed.ac.uk/vision/CAVIAR/CAVIARDATA1/) ShopAssistant2cor and EnterExitCrossingPaths1cor 
+* [Institute of Computer Graphics and Vision](https://www.tugraz.at/institute/icg/research/team-bischof/lrs/downloads/multicam/) for dataset on Indoor Multi-camera Pedestrian Datasets Easy and Medium datasets
+* [2D MOT 2015](https://motchallenge.net/data/2D_MOT_2015/) AVG-TownCentre: A pedestrian street filmed from an elevated point 

@@ -31,7 +31,7 @@ normalizer_config = dict(
 visualization_config = dict(
     show_all_detections=True,
     max_window_size=(1280, 720),
-    stack_frames='vertical'
+    stack_frames='horizontal'
 )
 
 analyzer = dict(

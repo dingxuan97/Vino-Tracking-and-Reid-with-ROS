@@ -37,8 +37,9 @@ set_log_config()
 import rospy
 import sys
 import numpy as np
+from vino_reid.msg import transfer_frames
 
-from std_msgs.msg import String,UInt16MultiArray,MultiArrayLayout,MultiArrayDimension,Int16,Int32MultiArray
+from std_msgs.msg import String,UInt16MultiArray,MultiArrayLayout,MultiArrayDimension,Int8,Int32MultiArray
 from sensor_msgs.msg import Image
 from cv_bridge import CvBridge, CvBridgeError
 
@@ -134,18 +135,21 @@ def run(params, config, capture, detector, reid):
 	else:
 		output_video = None
 	
+	# Get the first frame
 	prev_frames = thread_body.frames_queue.get()
 	detector.run_async(prev_frames, frame_number)
-	#ROS 
+
+	# ROS stuff 
 	bridge = CvBridge()
 	rospy.init_node('publisher', anonymous = True)
-	index_pub = rospy.Publisher('/label_idx', Int16, queue_size=10)
-	vis_pub = rospy.Publisher('/vis_pub', Image, queue_size=10)
 	frames_pub = rospy.Publisher('/frames_pub', Image, queue_size=10)
+	# transfer_pub = rospy.Publisher('/transfer_pub', transfer_frames, queue_size=10)
+	# no_of_frames_pub = rospy.Publisher('/number', Int8, queue_size=10)
 	rate = rospy.Rate(30)
 	img = Image()
 	img2 = Image()
-	
+	img3 = transfer_frames()
+
 	while not rospy.is_shutdown():
 	#	while thread_body.process:
 		try:
@@ -162,7 +166,18 @@ def run(params, config, capture, detector, reid):
 					break
 			start = time.time()
 			try:
+				# Depending on the number of inputs, frames will always receive each frame in order you specified
+				# frames[0] from your first input, frames[1] from the second etc..
+				# Each frames are read in individual threads 
 				frames = thread_body.frames_queue.get_nowait()
+				# no_of_frames_pub.publish((len(frames)))
+				# if len(frames) == 3:
+				# 	img3.data1 = bridge.cv2_to_imgmsg(frames[0], 'bgr8')
+				# 	img3.data2 = bridge.cv2_to_imgmsg(frames[1], 'bgr8')
+				# 	img3.data3 = bridge.cv2_to_imgmsg(frames[2], 'bgr8')
+				# elif len(frames) == 1:
+				# 	img3.data1 = bridge.cv2_to_imgmsg(frames[0], 'bgr8')
+				# transfer_pub.publish(img3)
 				for f in frames:
 					img2 = bridge.cv2_to_imgmsg(f, 'bgr8')
 					frames_pub.publish(img2)
@@ -203,9 +218,6 @@ def run(params, config, capture, detector, reid):
 			#print('\rProcessing frame: {}, fps = {} (avg_fps = {:.3})'.format(frame_number, fps, 1. / avg_latency.get()), end="")
 			prev_frames, frames = frames, prev_frames
 
-			img = bridge.cv2_to_imgmsg(vis, 'bgr8')
-			rospy.loginfo('Publishing frame!')
-			vis_pub.publish(img)
 		
 		except CvBridgeError as e:
 			rospy.loginfo(e)

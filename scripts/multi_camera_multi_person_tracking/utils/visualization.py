@@ -62,7 +62,7 @@ def draw_detections(target_idx, frame, detections, show_all_detections=True):
             for idx in target_idx:
             	if idx == label[3:]:
             		cv.putText(frame, label, (left, top), cv.FONT_HERSHEY_SIMPLEX, 3, (0, 0, 255), 5)
-            	elif idx != label[3:]:
+            	else:
                     cv.putText(frame, label, (left, top), cv.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 2)
     index_roi.publish(data=array)
     array = []

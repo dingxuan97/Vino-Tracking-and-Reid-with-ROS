@@ -20,6 +20,8 @@ import os.path as osp
 import os
 import sys
 import time
+import queue
+import threading 
 from argparse import ArgumentParser
 
 import cv2
@@ -39,8 +41,9 @@ from util.misc import COLOR_PALETTE
 
 # import ros packages
 from vino_reid.msg import face_roi
+from vino_reid.msg import transfer_frames
 import rospy
-from std_msgs.msg import String,Int8,Int32MultiArray
+from std_msgs.msg import String,Int8,Int32MultiArray,Int16
 from sensor_msgs.msg import Image
 from cv_bridge import CvBridge, CvBridgeError
 
@@ -50,11 +53,15 @@ MATCH_ALGO = ['HUNGARIAN', 'MIN_DIST']
 
 # Global Variables
 FRAME = np.zeros(128)
+IMAGE = np.zeros(128)
+IMAGE2 = np.zeros(128)
+IMAGE3 = np.zeros(128)
 face_label = "Unknown"
 roi2 = [0,0,0,0]
-vis = np.zeros(128)
 index_roi = [0,0,0,0,0]
 linked_identities = ""
+frames_list = []
+no_of_frames = 0
 
 
 class Identity:
@@ -75,7 +82,7 @@ def build_argparser():
     parser = ArgumentParser()
 
     general = parser.add_argument_group('General')
-    general.add_argument('-i', '--input', metavar="PATH", required=True,
+    general.add_argument('-i', '--input', metavar="PATH", required=False,
                          help="(optional) Path to the input video " \
                          "('0' for the camera, default)")
     general.add_argument('-o', '--output', metavar="PATH", default="",
@@ -276,11 +283,15 @@ class FrameProcessor:
         }
         return stats
 
+'''
+Added new Threading class to receive frames in multithread
+'''
+
 
 class Visualizer:
     BREAK_KEY_LABELS = "q(Q) or Escape"
     BREAK_KEYS = {ord('q'), ord('Q'), 27}
-    IMAGE = None
+
     def callback(data):
         global IMAGE
         IMAGE = CvBridge().imgmsg_to_cv2(data, desired_encoding="passthrough")
@@ -293,12 +304,11 @@ class Visualizer:
 
         '''
         #Added features
+        frames_snapped: Counts the number of frames to automatically save the image into database
         '''
         self.frames_snapped = 10
         self.name = None
-        '''
-        frames_snapped: Counts the number of frames to automatically save the image into database
-        '''
+
 
         self.frame_time = 0
         self.frame_start_time = 0
@@ -339,9 +349,6 @@ class Visualizer:
         global face_label, roi2
         def listener():
             global index_roi, face_label, roi2, linked_identities
-            def callback4(data):
-                global vis
-                vis = CvBridge().imgmsg_to_cv2(data, desired_encoding="passthrough")
                 
             def callback1(data):
                 global index_roi
@@ -360,7 +367,6 @@ class Visualizer:
             linked_identities = ""
             
             rospy.Subscriber("/index_roi", Int32MultiArray, callback1)
-            # rospy.Subscriber("/vis_pub", Image, callback4)
 
             for idx in range(len(index_roi)//4):
                 copy_index = index_roi[idx*5]
@@ -421,14 +427,18 @@ class Visualizer:
                                        roi.position - line_height * 0.5,
                                        font, scale=text_scale)
         '''
-        face_roi msg
-        name: face_label
-        roi: Array of the roi of the face
+        Compares ROI within this program
         '''
         x,y,w,h = int(roi.position[0]), int(roi.position[1]), int(roi.size[0]), int(roi.size[1])
         roi2 = [x,y,x+w,y+h]
         face_label = label.split('.')[0]
         listener()
+        '''
+        To publish to third party Subscriber
+        face_roi msg 
+        name: face_label
+        roi: Array of the roi of the face
+        '''
         # label_roi = face_roi()
         # face_pub = rospy.Publisher('/face_roi', face_roi, queue_size=10)
         # rate = rospy.Rate(30)
@@ -476,7 +486,7 @@ class Visualizer:
             log.info(self.frame_processor.get_performance_stats())
 
     def display_interactive_window(self, frame, person):
-        global linked_identities
+        global linked_identities, IMAGE
         color = (255, 255, 255)
         font = cv2.FONT_HERSHEY_SIMPLEX
         text_scale = 0.5
@@ -489,43 +499,73 @@ class Visualizer:
                     tuple(origin.astype(int)), font, text_scale, color, thickness)
         
         # Draw the detections
-                # Draw ROI
-        cv2.putText(frame, linked_identities, (50,200), font, 2, (0,0,200), 3)
-        for ids in person.reid: 
+        # Draw ROI
+        for ids in person.reid:
             if ids.roi != [0, 0, 0, 0]:
                 box_color = COLOR_PALETTE[ids.index % len(COLOR_PALETTE)] if ids.index >= 0 else (0, 0, 0)
                 cv2.rectangle(frame, (ids.roi[0], ids.roi[1]), (ids.roi[2], ids.roi[3]), box_color, thickness=3)
                 cv2.putText(frame, str(ids.index), (ids.roi[0], ids.roi[1]), cv2.FONT_HERSHEY_SIMPLEX, 1, box_color, 2)
-        cv2.imshow('Face recognition demo', frame)
-
+                if len(ids.links) != 0:
+                    maxKey = max(ids.links, key=ids.links.get)
+                    cv2.putText(frame, str(maxKey), (ids.roi[0]+30, ids.roi[1]), cv2.FONT_HERSHEY_SIMPLEX, 1, box_color, 2)
+        return frame
+        # cv2.imshow('Face recognition demo', frame)
 
     def should_stop_display(self):
         key = cv2.waitKey(self.frame_timeout) & 0xFF
         return key in self.BREAK_KEYS
 
-    def process(self, input_stream, output_stream, args):
-        self.input_stream = input_stream
-        self.output_stream = output_stream
+    '''
+    New function to convert each frames into horizontal
+    '''
+    def process(self, args):
+    # def process(self, input_stream, output_stream, args):
+        # self.input_stream = input_stream
+        # self.output_stream = output_stream
         
         def callback3(data):
             global FRAME
             FRAME = bridge.imgmsg_to_cv2(data, desired_encoding="passthrough")
+        
+        ### FORCED SUBSCRIPTION OF MULTIPLE CAMERAS INPUTS <<SEVERE LAG>>
+        def callback2(data):
+            global IMAGE, IMAGE2, IMAGE3, frames_list, no_of_frames
+            frames_list = []
+            if no_of_frames == 1:
+                IMAGE = bridge.imgmsg_to_cv2(data.data1, desired_encoding="passthrough")
+                frames_list.append(IMAGE)
+            elif no_of_frames == 3:
+                IMAGE = bridge.imgmsg_to_cv2(data.data1, desired_encoding="passthrough")
+                frames_list.append(IMAGE)
+                IMAGE2 = bridge.imgmsg_to_cv2(data.data2, desired_encoding="passthrough")
+                frames_list.append(IMAGE2)
+                IMAGE3 = bridge.imgmsg_to_cv2(data.data3, desired_encoding="passthrough")
+                frames_list.append(IMAGE3)
+        
+        def callback5(data):
+            global no_of_frames
+            no_of_frames = data.data
 
         # Init ROS
         bridge = CvBridge()
-        rospy.init_node('face_publisher', anonymous = True)
+        rospy.init_node('listener', anonymous = True)
         def listener():
             # From Multi-Cam Visualizer
             rospy.Subscriber('/frames_pub', Image, callback3)
+            # rospy.Subscriber('/transfer_pub', transfer_frames, callback2)
+            # rospy.Subscriber('/number', Int8, callback5)
         rate = rospy.Rate(30)
 
-        # Init tracker 
+        # Init Comparison Class
         person = Person() 
+
 
         while not rospy.is_shutdown():
         #while input_stream.isOpened():
             listener()
             try:
+                final_vis = None
+                # for f in frames_list:
                 if FRAME.any() != 0:
                     frame = FRAME
                     '''
@@ -577,15 +617,21 @@ class Visualizer:
                     self.draw_detections(frame, detections, person)
                     self.draw_status(frame, detections)
                     
-                    if output_stream:
-                        output_stream.write(frame)
+                    # if output_stream:
+                    #     output_stream.write(frame)
                     if self.display:
-                        self.display_interactive_window(frame, person)
+                        frame = self.display_interactive_window(frame, person)
+                        if final_vis is not None:
+                            final_vis = np.hstack([final_vis, frame])
+                        if final_vis is None:
+                            final_vis = frame
                         if self.should_stop_display():
                             break
                     
                     self.update_fps()
                     self.frame_num += 1
+                if final_vis is not None:
+                    cv2.imshow("Face Recognition Demo", final_vis)
             except CvBridgeError as e:
                 rospy.loginfo(e)
 
@@ -599,27 +645,27 @@ class Visualizer:
                      :]
 
     def run(self, args):
-        input_stream = Visualizer.open_input_stream(args.input)
-        if input_stream is None or not input_stream.isOpened():
-            log.error("Cannot open input stream: %s" % args.input)
-        fps = input_stream.get(cv2.CAP_PROP_FPS)
-        frame_size = (int(input_stream.get(cv2.CAP_PROP_FRAME_WIDTH)),
-                      int(input_stream.get(cv2.CAP_PROP_FRAME_HEIGHT)))
-        self.frame_count = int(input_stream.get(cv2.CAP_PROP_FRAME_COUNT))
-        if args.crop_width and args.crop_height:
-            crop_size = (args.crop_width, args.crop_height)
-            frame_size = tuple(np.minimum(frame_size, crop_size))
-        log.info("Input stream info: %d x %d @ %.2f FPS" % \
-            (frame_size[0], frame_size[1], fps))
-        output_stream = Visualizer.open_output_stream(args.output, fps, frame_size)
+        # input_stream = Visualizer.open_input_stream(args.input)
+        # if input_stream is None or not input_stream.isOpened():
+        #     log.error("Cannot open input stream: %s" % args.input)
+        # fps = input_stream.get(cv2.CAP_PROP_FPS)
+        # frame_size = (int(input_stream.get(cv2.CAP_PROP_FRAME_WIDTH)),
+        #               int(input_stream.get(cv2.CAP_PROP_FRAME_HEIGHT)))
+        # self.frame_count = int(input_stream.get(cv2.CAP_PROP_FRAME_COUNT))
+        # if args.crop_width and args.crop_height:
+        #     crop_size = (args.crop_width, args.crop_height)
+        #     frame_size = tuple(np.minimum(frame_size, crop_size))
+        # log.info("Input stream info: %d x %d @ %.2f FPS" % \
+        #     (frame_size[0], frame_size[1], fps))
+        # output_stream = Visualizer.open_output_stream(args.output, fps, frame_size)
 
-        self.process(input_stream, output_stream, args)
-
+        # self.process(input_stream, output_stream, args)
+        self.process(args)
         # Release resources
-        if output_stream:
-            output_stream.release()
-        if input_stream:
-            input_stream.release()
+        # if output_stream:
+        #     output_stream.release()
+        # if input_stream:
+        #     input_stream.release()
 
         cv2.destroyAllWindows()
 
@@ -648,6 +694,7 @@ class Visualizer:
 
 
 def main():
+
     args = build_argparser().parse_args()
 
     log.basicConfig(format="[ %(levelname)s ] %(asctime)-15s %(message)s",
@@ -657,6 +704,8 @@ def main():
 
     visualizer = Visualizer(args)
     visualizer.run(args)
+
+    
 
 
 if __name__ == '__main__':

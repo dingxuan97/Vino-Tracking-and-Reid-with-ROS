@@ -52,6 +52,7 @@ find_package(catkin REQUIRED COMPONENTS
  add_message_files(
    FILES
    face_roi.msg
+   transfer_frames.msg
 #   Message2.msg
  )
 
